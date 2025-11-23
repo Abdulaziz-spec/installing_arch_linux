@@ -370,32 +370,23 @@ fi
 
 log_success "Разделы смонтированы"
 
-# 4. Настройка зеркал с fallback
+# 4. БЫСТРАЯ настройка зеркал (БЕЗ Reflector!)
 echo -e "${BLUE}[4/10]${NC} ${YELLOW}Настройка зеркал...${NC}"
 
-log "Попытка использовать reflector..."
-if command -v reflector &> /dev/null; then
-    if reflector --country Russia,Kazakhstan,Germany,Poland --age 12 --protocol https --sort rate --save /etc/pacman.d/mirrorlist 2>/dev/null; then
-        log_success "Reflector настроил зеркала"
-    else
-        log_warning "Reflector не сработал, использую запасные зеркала..."
-        cat > /etc/pacman.d/mirrorlist << 'EOF'
-Server = https://mirror.yandex.ru/archlinux/$repo/os/$arch
-Server = https://mirror.truenetwork.ru/archlinux/$repo/os/$arch
-Server = https://mirror.surf/archlinux/$repo/os/$arch
-Server = https://archlinux.ipacct.com/archlinux/$repo/os/$arch
+log "Установка быстрых зеркал (без reflector - моментально!)..."
+cat > /etc/pacman.d/mirrorlist << 'EOF'
+# Быстрые глобальные CDN зеркала
+Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch
 Server = https://mirror.rackspace.com/archlinux/$repo/os/$arch
+Server = https://mirror.osbeck.com/archlinux/$repo/os/$arch
+Server = https://america.mirror.pkgbuild.com/$repo/os/$arch
+Server = https://asia.mirror.pkgbuild.com/$repo/os/$arch
+Server = https://europe.mirror.pkgbuild.com/$repo/os/$arch
+Server = https://archlinux.mailtunnel.eu/$repo/os/$arch
+Server = https://mirror.cyberbits.eu/archlinux/$repo/os/$arch
 EOF
-        log_success "Установлены запасные зеркала"
-    fi
-else
-    log_warning "Reflector не найден, использую запасные зеркала..."
-    cat > /etc/pacman.d/mirrorlist << 'EOF'
-Server = https://mirror.yandex.ru/archlinux/$repo/os/$arch
-Server = https://mirror.truenetwork.ru/archlinux/$repo/os/$arch
-Server = https://mirror.surf/archlinux/$repo/os/$arch
-EOF
-fi
+
+log_success "Зеркала настроены за 1 секунду!"
 
 # 5. Установка базовой системы с множественными попытками
 echo -e "${BLUE}[5/10]${NC} ${YELLOW}Установка базовой системы (5-10 минут)...${NC}"
