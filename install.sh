@@ -400,7 +400,7 @@ fi
 # 5. Установка базовой системы с множественными попытками
 echo -e "${BLUE}[5/10]${NC} ${YELLOW}Установка базовой системы (5-10 минут)...${NC}"
 
-BASE_PACKAGES="base base-devel linux linux-firmware intel-ucode amd-ucode networkmanager vim nano git wget curl sudo reflector"
+BASE_PACKAGES="base base-devel linux linux-firmware intel-ucode amd-ucode networkmanager vim nano git wget curl sudo"
 
 # Добавляем GRUB для BIOS режима
 if [ "$BOOT_MODE" = "bios" ]; then
@@ -414,8 +414,8 @@ pacman -Sy
 log "Установка базовых пакетов..."
 INSTALL_SUCCESS=false
 
-# Попытка 1: Полная установка
-if pacstrap /mnt $BASE_PACKAGES; then
+# Попытка 1: Полная установка (быстро, без вывода)
+if pacstrap -K /mnt $BASE_PACKAGES 2>&1 | grep -v "warning:" > /dev/null; then
     INSTALL_SUCCESS=true
     log_success "Базовая система установлена с первой попытки"
 fi
@@ -424,11 +424,11 @@ fi
 if [ "$INSTALL_SUCCESS" = false ]; then
     log_warning "Пробую установку по группам..."
     
-    if pacstrap /mnt base linux linux-firmware && \
-       pacstrap /mnt base-devel && \
-       pacstrap /mnt intel-ucode amd-ucode && \
-       pacstrap /mnt networkmanager vim nano && \
-       pacstrap /mnt git wget curl sudo reflector; then
+    if pacstrap -K /mnt base linux linux-firmware 2>&1 | grep -v "warning:" > /dev/null && \
+       pacstrap -K /mnt base-devel 2>&1 | grep -v "warning:" > /dev/null && \
+       pacstrap -K /mnt intel-ucode amd-ucode 2>&1 | grep -v "warning:" > /dev/null && \
+       pacstrap -K /mnt networkmanager vim nano 2>&1 | grep -v "warning:" > /dev/null && \
+       pacstrap -K /mnt git wget curl sudo 2>&1 | grep -v "warning:" > /dev/null; then
         INSTALL_SUCCESS=true
         log_success "Базовая система установлена по группам"
     fi
@@ -438,7 +438,7 @@ fi
 if [ "$INSTALL_SUCCESS" = false ]; then
     log_warning "Устанавливаю минимальную систему..."
     
-    if pacstrap /mnt base linux linux-firmware networkmanager; then
+    if pacstrap -K /mnt base linux linux-firmware networkmanager 2>&1 | grep -v "warning:" > /dev/null; then
         log_success "Минимальная система установлена"
         log "Докачиваю остальные пакеты в chroot..."
         INSTALL_SUCCESS=true
@@ -606,10 +606,9 @@ pacman -Sy
 
 echo "==> Установка Hyprland и основных компонентов..."
 GUI_PACKAGES=(
-    # Hyprland и Wayland
+    # Hyprland и Wayland (самое важное!)
     "hyprland"
     "xdg-desktop-portal-hyprland"
-    "xdg-desktop-portal-gtk"
     "qt5-wayland"
     "qt6-wayland"
     
@@ -619,83 +618,47 @@ GUI_PACKAGES=(
     "dunst"
     "kitty"
     "thunar"
-    "thunar-archive-plugin"
-    "file-roller"
     
     # Система
     "polkit-kde-agent"
     
     # Аудио
     "pipewire"
-    "pipewire-alsa"
     "pipewire-pulse"
-    "pipewire-jack"
     "wireplumber"
     "pavucontrol"
     
     # Инструменты
     "grim"
     "slurp"
-    "swappy"
     "wl-clipboard"
-    "brightnessctl"
-    "playerctl"
     
-    # Шрифты
-    "noto-fonts"
+    # Шрифты (только основные)
+    "ttf-dejavu"
+    "ttf-liberation"
     "noto-fonts-emoji"
-    "noto-fonts-cjk"
-    "ttf-jetbrains-mono-nerd"
-    "ttf-font-awesome"
     
     # Приложения
     "firefox"
     
-    # GTK и Qt
+    # GTK
     "gtk3"
-    "gtk4"
     
     # Сеть
     "network-manager-applet"
     
-    # Темы
-    "papirus-icon-theme"
-    "breeze"
-    
     # Утилиты
-    "fastfetch"
     "htop"
-    "btop"
-    "man-db"
-    "man-pages"
-    "zip"
-    "unzip"
-    "p7zip"
 )
 
-# Установка по группам с обработкой ошибок
-install_group() {
-    local group_name="$1"
-    shift
-    local packages=("$@")
-    
-    echo "==> Установка группы: $group_name"
-    
-    for pkg in "${packages[@]}"; do
-        if ! pacman -S --noconfirm --needed "$pkg" 2>/dev/null; then
-            echo "ПРЕДУПРЕЖДЕНИЕ: Не удалось установить $pkg, продолжаю..."
-        fi
-    done
-}
-
-# Попытка установить все сразу
-if pacman -S --noconfirm --needed "${GUI_PACKAGES[@]}" 2>/dev/null; then
-    echo "==> Все пакеты GUI установлены успешно"
-else
+# Быстрая установка без лишнего вывода
+if pacman -S --noconfirm --needed "${GUI_PACKAGES[@]}" 2>&1 | grep -E "(error|failed)" ; then
     echo "==> Устанавливаю пакеты по одному..."
     for pkg in "${GUI_PACKAGES[@]}"; do
         pacman -S --noconfirm --needed "$pkg" 2>/dev/null || echo "Пропуск: $pkg"
     done
+else
+    echo "==> Все GUI пакеты установлены!"
 fi
 
 # Драйверы для VM
