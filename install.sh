@@ -116,13 +116,21 @@ echo -e "${NC}"
 
 sleep 2
 
-# Проверка UEFI
+# Проверка режима загрузки (UEFI или BIOS)
 log "Проверка режима загрузки..."
-if [ ! -d /sys/firmware/efi ]; then
-    log_error "ОШИБКА: Загрузись в UEFI режиме!"
-    exit 1
+BOOT_MODE="bios"
+if [ -d /sys/firmware/efi ]; then
+    BOOT_MODE="uefi"
+    log_success "UEFI режим обнаружен"
+else
+    log_warning "BIOS режим обнаружен (Legacy)"
+    echo -e "${YELLOW}╔════════════════════════════════════════════╗${NC}"
+    echo -e "${YELLOW}║  Обнаружен BIOS режим!                     ║${NC}"
+    echo -e "${YELLOW}║  Рекомендуется использовать UEFI для VM    ║${NC}"
+    echo -e "${YELLOW}║  Но установка продолжится с GRUB           ║${NC}"
+    echo -e "${YELLOW}╚════════════════════════════════════════════╝${NC}"
+    sleep 3
 fi
-log_success "UEFI режим обнаружен"
 
 # Проверка интернета с несколькими попытками
 log "Проверка интернет соединения..."
@@ -239,27 +247,49 @@ swapoff -a 2>/dev/null || true
 log "Очистка диска..."
 wipefs -af "$DISK" 2>/dev/null || true
 sgdisk --zap-all "$DISK" 2>/dev/null || true
+dd if=/dev/zero of="$DISK" bs=512 count=1 conv=notrunc 2>/dev/null || true
 
-log "Создание GPT таблицы..."
-parted -s "$DISK" mklabel gpt || {
-    log_error "Не удалось создать GPT таблицу"
-    exit 1
-}
+if [ "$BOOT_MODE" = "uefi" ]; then
+    log "Создание GPT таблицы для UEFI..."
+    parted -s "$DISK" mklabel gpt || {
+        log_error "Не удалось создать GPT таблицу"
+        exit 1
+    }
+    
+    log "Создание EFI раздела (512MB)..."
+    parted -s "$DISK" mkpart primary fat32 1MiB 513MiB || {
+        log_error "Не удалось создать EFI раздел"
+        exit 1
+    }
+    parted -s "$DISK" set 1 esp on
+    
+    log "Создание корневого раздела..."
+    parted -s "$DISK" mkpart primary ext4 513MiB 100% || {
+        log_error "Не удалось создать корневой раздел"
+        exit 1
+    }
+else
+    log "Создание MBR таблицы для BIOS..."
+    parted -s "$DISK" mklabel msdos || {
+        log_error "Не удалось создать MBR таблицу"
+        exit 1
+    }
+    
+    log "Создание boot раздела (512MB)..."
+    parted -s "$DISK" mkpart primary ext4 1MiB 513MiB || {
+        log_error "Не удалось создать boot раздел"
+        exit 1
+    }
+    parted -s "$DISK" set 1 boot on
+    
+    log "Создание корневого раздела..."
+    parted -s "$DISK" mkpart primary ext4 513MiB 100% || {
+        log_error "Не удалось создать корневой раздел"
+        exit 1
+    }
+fi
 
-log "Создание EFI раздела..."
-parted -s "$DISK" mkpart primary fat32 1MiB 513MiB || {
-    log_error "Не удалось создать EFI раздел"
-    exit 1
-}
-parted -s "$DISK" set 1 esp on
-
-log "Создание корневого раздела..."
-parted -s "$DISK" mkpart primary ext4 513MiB 100% || {
-    log_error "Не удалось создать корневой раздел"
-    exit 1
-}
-
-log_success "Диск размечен"
+log_success "Диск размечен в режиме $BOOT_MODE"
 
 # Определение имен разделов
 sleep 2
@@ -285,14 +315,26 @@ fi
 # 2. Форматирование с проверками
 echo -e "${BLUE}[2/10]${NC} ${YELLOW}Форматирование разделов...${NC}"
 
-log "Форматирование EFI раздела..."
-if ! mkfs.fat -F32 "$BOOT_PART"; then
-    log_warning "Первая попытка не удалась, пробую еще раз..."
-    wipefs -af "$BOOT_PART"
-    mkfs.fat -F32 "$BOOT_PART" || {
-        log_error "Не удалось отформатировать EFI раздел"
-        exit 1
-    }
+if [ "$BOOT_MODE" = "uefi" ]; then
+    log "Форматирование EFI раздела (FAT32)..."
+    if ! mkfs.fat -F32 "$BOOT_PART"; then
+        log_warning "Первая попытка не удалась, пробую еще раз..."
+        wipefs -af "$BOOT_PART"
+        mkfs.fat -F32 "$BOOT_PART" || {
+            log_error "Не удалось отформатировать EFI раздел"
+            exit 1
+        }
+    fi
+else
+    log "Форматирование boot раздела (EXT4)..."
+    if ! mkfs.ext4 -F "$BOOT_PART"; then
+        log_warning "Первая попытка не удалась, пробую еще раз..."
+        wipefs -af "$BOOT_PART"
+        mkfs.ext4 -F "$BOOT_PART" || {
+            log_error "Не удалось отформатировать boot раздел"
+            exit 1
+        }
+    fi
 fi
 
 log "Форматирование корневого раздела..."
@@ -359,6 +401,12 @@ fi
 echo -e "${BLUE}[5/10]${NC} ${YELLOW}Установка базовой системы (5-10 минут)...${NC}"
 
 BASE_PACKAGES="base base-devel linux linux-firmware intel-ucode amd-ucode networkmanager vim nano git wget curl sudo reflector"
+
+# Добавляем GRUB для BIOS режима
+if [ "$BOOT_MODE" = "bios" ]; then
+    BASE_PACKAGES="$BASE_PACKAGES grub"
+    log "BIOS режим: добавлен пакет GRUB"
+fi
 
 log "Обновление баз данных pacman..."
 pacman -Sy
@@ -454,23 +502,27 @@ sed -i 's/# %wheel ALL=(ALL:ALL) NOPASSWD: ALL/%wheel ALL=(ALL:ALL) NOPASSWD: AL
 echo "==> Включение NetworkManager..."
 systemctl enable NetworkManager
 
-echo "==> Установка загрузчика..."
-bootctl install || {
-    echo "Первая попытка установки загрузчика не удалась, пробую еще раз..."
-    sleep 2
-    bootctl install
-}
+if [ "$BOOT_MODE" = "uefi" ]; then
+    echo "==> Установка systemd-boot (UEFI)..."
+    bootctl install || {
+        echo "Первая попытка установки загрузчика не удалась, пробую еще раз..."
+        sleep 2
+        bootctl install || {
+            echo "ОШИБКА: Не удалось установить systemd-boot!"
+            exit 1
+        }
+    }
 
-cat > /boot/loader/loader.conf << EOF
+    cat > /boot/loader/loader.conf << EOF
 default arch.conf
 timeout 3
 console-mode max
 editor no
 EOF
 
-ROOT_UUID=\$(blkid -s UUID -o value $ROOT_PART)
+    ROOT_UUID=\$(blkid -s UUID -o value $ROOT_PART)
 
-cat > /boot/loader/entries/arch.conf << EOF
+    cat > /boot/loader/entries/arch.conf << EOF
 title   Arch Linux
 linux   /vmlinuz-linux
 initrd  /intel-ucode.img
@@ -478,6 +530,37 @@ initrd  /amd-ucode.img
 initrd  /initramfs-linux.img
 options root=UUID=\$ROOT_UUID rw quiet splash loglevel=3
 EOF
+    
+    echo "==> systemd-boot установлен"
+else
+    echo "==> Установка GRUB (BIOS)..."
+    
+    # Установка GRUB если его нет
+    if ! command -v grub-install &> /dev/null; then
+        echo "Установка пакета GRUB..."
+        pacman -S --noconfirm grub || {
+            echo "ОШИБКА: Не удалось установить GRUB!"
+            exit 1
+        }
+    fi
+    
+    grub-install --target=i386-pc "$DISK" || {
+        echo "Первая попытка установки GRUB не удалась, пробую еще раз..."
+        sleep 2
+        grub-install --target=i386-pc --recheck "$DISK" || {
+            echo "ОШИБКА: Не удалось установить GRUB!"
+            exit 1
+        }
+    }
+    
+    echo "==> Генерация конфигурации GRUB..."
+    grub-mkconfig -o /boot/grub/grub.cfg || {
+        echo "ОШИБКА: Не удалось создать конфиг GRUB!"
+        exit 1
+    }
+    
+    echo "==> GRUB установлен"
+fi
 
 echo "==> Базовая настройка завершена!"
 CHROOT_SCRIPT
